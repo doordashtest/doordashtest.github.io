@@ -78,6 +78,18 @@
     border-bottom: 1px solid var(--border);
   }
   .topbar h1 { font-size: 20px; letter-spacing: -0.01em; }
+  .version {
+    margin-left: 6px;
+    padding: 2px 8px;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0;
+    vertical-align: middle;
+    color: var(--muted);
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+  }
 
   main {
     display: grid;
@@ -199,6 +211,9 @@
   .suggestions li:hover, .suggestions li[aria-selected="true"] { background: var(--surface-2); }
   .sug-main { display: block; font-weight: 600; }
   .sug-sub { display: block; font-size: 13px; color: var(--muted); }
+  .suggestions li.sug-empty { font-size: 13px; color: var(--muted); background: none; cursor: default; }
+  /* Leaves room for the sticky header when a field is scrolled to the top. */
+  .combo input { scroll-margin-top: calc(72px + env(safe-area-inset-top)); }
 
   /* ---------- location type ---------- */
   .chips { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
@@ -338,7 +353,8 @@
 <body>
 
 <header class="topbar">
-  <h1>Dash Check</h1>
+  <!-- Bump the version on every change, so the copy on GitHub Pages can be told from an older one. -->
+  <h1>Dash Check <span class="version">v3</span></h1>
   <button id="themeToggle" class="btn small" type="button"></button>
 </header>
 
@@ -509,6 +525,11 @@
   const SUGGEST_DELAY_MS = 300;
   const MIN_SUGGEST_CHARS = 3;
   const MIN_LOOKUP_CHARS = 5;
+  const MAX_SUGGESTIONS = 6;
+  const SEARCH_BOX_DEG = 0.4;   // suggestions come from within about 28 miles of the driver
+  const HOUSE_BOX_DEG = 0.12;   // a house number is looked for within about 8 miles of its street
+  const HOUSE_RANK = 28;        // Nominatim place_rank from which a result is a building, not a street
+  const NOMINATIM_GAP_MS = 1100;
 
   const KEYS = {
     theme: 'dashcheck.theme',
@@ -568,59 +589,183 @@
   // ---------------------------------------------------------------------
   // Geocoding and routing
   // ---------------------------------------------------------------------
-  function photonParts(p) {
-    const street = [p.housenumber, p.street].filter(Boolean).join(' ');
-    const city = p.city || p.district || p.county;
-    const locality = [city !== p.name ? city : '', [p.state, p.postcode].filter(Boolean).join(' ')].filter(Boolean).join(', ');
-    if (p.name && street) return { main: p.name, sub: [street, locality].filter(Boolean).join(', ') };
-    return { main: p.name || street, sub: locality };
+  const rad = deg => deg * Math.PI / 180;
+
+  // "west,south,east,north" box reaching `deg` degrees of latitude from a point.
+  function boxAround(point, deg) {
+    const dLon = deg / Math.cos(rad(point.lat));
+    return [point.lon - dLon, point.lat - deg, point.lon + dLon, point.lat + deg].map(n => n.toFixed(4)).join(',');
   }
 
-  async function photonSearch(query, bias, signal) {
-    const params = new URLSearchParams({ q: query, limit: '5', lang: 'en' });
+  // Unit numbers only confuse the geocoders, so they are dropped from queries.
+  const UNIT_RE = /[,\s]*(?:\b(?:apt|apartment|unit|suite|ste|bldg)\b\.?|#)\s*[\w-]*/gi;
+  const HOUSE_NUMBER_RE = /^(\d[\d-]*[a-z]?)\b\s*(.*)$/i;
+
+  const unitOf = text => (text.match(UNIT_RE) || []).map(part => part.replace(/^[,\s]+/, '')).join(' ').trim();
+  const searchText = text => text.replace(UNIT_RE, ' ').replace(/[,\s]+/g, ' ').trim();
+
+  const SUFFIXES = new Map([
+    ['st', 'Street'], ['rd', 'Road'], ['ave', 'Avenue'], ['av', 'Avenue'], ['blvd', 'Boulevard'], ['dr', 'Drive'],
+    ['ln', 'Lane'], ['ct', 'Court'], ['pl', 'Place'], ['pkwy', 'Parkway'], ['hwy', 'Highway'], ['cir', 'Circle'],
+    ['ter', 'Terrace'], ['trl', 'Trail'],
+  ]);
+
+  const DIRECTIONS = new Map([['n', 'North'], ['s', 'South'], ['e', 'East'], ['w', 'West']]);
+  const bare = word => word.toLowerCase().replace('.', '');
+
+  // Photon finds "Chatham Road" but not "Chatham Rd", so a trailing abbreviation is spelled out.
+  function expandSuffix(text) {
+    const words = text.split(' ');
+    const full = words.length > 1 && SUFFIXES.get(bare(words[words.length - 1]));
+    if (full) words[words.length - 1] = full;
+    return words.join(' ');
+  }
+
+  // Likewise "West Mon" matches West Monroe Street where "W Mon" does not.
+  // "E St" is left alone: there the letter is the street's name.
+  function expandDirection(street) {
+    const words = street.split(' ');
+    const full = words.length > 1 && DIRECTIONS.get(bare(words[0]));
+    const lettered = words.length === 2 && (SUFFIXES.has(bare(words[1])) || [...SUFFIXES.values()].includes(words[1]));
+    if (full && !lettered) words[0] = full;
+    return words.join(' ');
+  }
+
+  async function photonSearch(query, bias, layers, signal) {
+    const params = new URLSearchParams({ q: query, limit: '10', lang: 'en' });
+    for (const layer of layers) params.append('layer', layer);
     if (bias) {
+      // Only places within delivery range of the driver, closest ranked highest.
+      params.set('bbox', boxAround(bias, SEARCH_BOX_DEG));
       params.set('lat', bias.lat);
       params.set('lon', bias.lon);
+      params.set('zoom', '12');
+      params.set('location_bias_scale', '0.1');
     }
     const res = await fetch(`${PHOTON_URL}?${params}`, { signal });
     if (!res.ok) throw new Error(`Photon ${res.status}`);
     const data = await res.json();
-    return (data.features || []).map(feature => {
-      const p = feature.properties || {};
-      const [lon, lat] = feature.geometry.coordinates;
-      const { main, sub } = photonParts(p);
-      return { label: [main, sub].filter(Boolean).join(', '), main, sub, lat, lon, osm: { key: p.osm_key, value: p.osm_value } };
-    }).filter(item => item.main);
+    return (data.features || []).map(feature => ({
+      p: feature.properties || {},
+      lat: feature.geometry.coordinates[1],
+      lon: feature.geometry.coordinates[0],
+    }));
   }
 
-  // Unit numbers only confuse the geocoder, so they are dropped from the query.
-  const UNIT_RE = /[,\s]*(?:\b(?:apt|apartment|unit|suite|ste|bldg)\b\.?|#)\s*[\w-]+/gi;
+  function toSuggestion(place, unit) {
+    const p = place.p;
+    const street = [p.housenumber, p.street, unit].filter(Boolean).join(' ');
+    const city = p.city || p.district || p.county || '';
+    const locality = [city !== p.name ? city : '', [p.state, p.postcode].filter(Boolean).join(' ')].filter(Boolean).join(', ');
+    const named = p.name && street;
+    const main = named ? p.name : p.name || street;
+    const sub = named ? [street, locality].filter(Boolean).join(', ') : locality;
+    return {
+      label: [main, sub].filter(Boolean).join(', '),
+      main,
+      sub,
+      lat: place.lat,
+      lon: place.lon,
+      osm: { key: p.osm_key, value: p.osm_value },
+      streetLine: place.streetLine,
+      // Photon lists a street once per postcode; the town is what tells two apart.
+      key: [p.name, street, city].filter(Boolean).join('|').toLowerCase(),
+    };
+  }
 
-  async function geocode(text, bias) {
-    const params = new URLSearchParams({ format: 'jsonv2', limit: '1', q: text.replace(UNIT_RE, '') });
-    if (bias) {
-      // Prefer matches near the driver; this is a hint, not a hard bound.
-      params.set('viewbox', [bias.lon - 0.5, bias.lat + 0.5, bias.lon + 0.5, bias.lat - 0.5].join(','));
+  /**
+   * Suggestions for partly typed text, limited to the area around `bias` when given.
+   * Returns null when there is too little text to search on.
+   */
+  async function suggestAddresses(text, bias, signal) {
+    const unit = unitOf(text);
+    const query = expandSuffix(searchText(text));
+    const numbered = HOUSE_NUMBER_RE.exec(query);
+    let places;
+
+    if (!numbered) {
+      if (query.length < MIN_SUGGEST_CHARS) return null;
+      places = await photonSearch(query, bias, ['house', 'street'], signal);
+    } else {
+      const [, number, street] = numbered;
+      if (street.length < 2) return null;
+      const [houses, streets] = await Promise.all([
+        photonSearch(query, bias, ['house'], signal),
+        photonSearch(expandDirection(street), bias, ['street'], signal),
+      ]);
+      const exact = houses.filter(house => (house.p.housenumber || '').toLowerCase() === number.toLowerCase());
+      // OpenStreetMap is missing most US house numbers, so the typed number is offered on
+      // every matching street; the exact spot is looked up once one is picked.
+      const guessed = streets.filter(found => found.p.name).map(found => ({
+        p: { housenumber: number, street: found.p.name, city: found.p.city, district: found.p.district, county: found.p.county, state: found.p.state },
+        lat: found.lat,
+        lon: found.lon,
+        streetLine: `${number} ${found.p.name}`,
+      }));
+      if (bias) guessed.sort((a, b) => haversineMiles(a, bias) - haversineMiles(b, bias));
+      // Plain addresses first, then businesses that sit at that number.
+      places = [...exact.filter(house => !house.p.name), ...guessed, ...exact.filter(house => house.p.name)];
     }
-    const res = await fetch(`${NOMINATIM_URL}/search?${params}`);
+
+    const seen = new Set();
+    return places.map(place => toSuggestion(place, unit))
+      .filter(item => item.main && !seen.has(item.key) && seen.add(item.key))
+      .slice(0, MAX_SUGGESTIONS);
+  }
+
+  // Nominatim allows one request per second.
+  let nominatimFree = 0;
+  async function nominatim(path, params) {
+    const wait = nominatimFree - Date.now();
+    nominatimFree = Math.max(nominatimFree, Date.now()) + NOMINATIM_GAP_MS;
+    if (wait > 0) await new Promise(resolve => setTimeout(resolve, wait));
+    const res = await fetch(`${NOMINATIM_URL}/${path}?${new URLSearchParams({ format: 'jsonv2', ...params })}`);
     if (!res.ok) throw new Error(`Nominatim ${res.status}`);
-    const [hit] = await res.json();
+    return res.json();
+  }
+
+  const toPoint = hit => ({
+    lat: Number(hit.lat),
+    lon: Number(hit.lon),
+    exact: hit.place_rank >= HOUSE_RANK,
+    osm: { key: hit.category, value: hit.type },
+  });
+
+  // Pins a house number on a known street. Nominatim has address ranges for most
+  // US streets, which Photon's suggestions do not.
+  async function locateHouse(streetLine, near) {
+    // With a small limit Nominatim only checks the first few stretches of a long road
+    // for the number and gives back the bare street instead.
+    const hits = await nominatim('search', { street: streetLine, limit: '40', bounded: '1', viewbox: boxAround(near, HOUSE_BOX_DEG) });
+    const houses = hits.map(toPoint).filter(point => point.exact);
+    houses.sort((a, b) => haversineMiles(a, near) - haversineMiles(b, near));
+    return houses[0] || null;
+  }
+
+  // Full lookup of a pasted or completely typed address.
+  async function geocode(text, bias) {
+    const query = text.replace(UNIT_RE, '').trim();
+    const params = { q: query, limit: '1' };
+    if (bias) params.viewbox = boxAround(bias, SEARCH_BOX_DEG); // a preference here, not a hard bound
+    const [hit] = await nominatim('search', params);
     if (!hit) return null;
-    return { label: text, lat: Number(hit.lat), lon: Number(hit.lon), osm: { key: hit.category, value: hit.type } };
+    let point = toPoint(hit);
+    const numbered = HOUSE_NUMBER_RE.test(query);
+    if (numbered && !point.exact) {
+      // Only the street matched, so try again for the house itself.
+      point = await locateHouse(query.split(',')[0].trim(), point).catch(() => null) || point;
+    }
+    return { label: text, lat: point.lat, lon: point.lon, osm: point.osm, streetOnly: numbered && !point.exact };
   }
 
   async function reverseGeocode(lat, lon) {
-    const params = new URLSearchParams({ format: 'jsonv2', lat, lon, zoom: '18' });
-    const res = await fetch(`${NOMINATIM_URL}/reverse?${params}`);
-    if (!res.ok) throw new Error(`Nominatim ${res.status}`);
-    const data = await res.json();
+    const data = await nominatim('reverse', { lat, lon, zoom: '18' });
     const a = data.address || {};
     const street = [a.house_number, a.road].filter(Boolean).join(' ');
     return [street, a.city || a.town || a.village || a.suburb].filter(Boolean).join(', ') || data.display_name || '';
   }
 
   function haversineMiles(a, b) {
-    const rad = deg => deg * Math.PI / 180;
     const dLat = rad(b.lat - a.lat);
     const dLon = rad(b.lon - a.lon);
     const h = Math.sin(dLat / 2) ** 2 + Math.cos(rad(a.lat)) * Math.cos(rad(b.lat)) * Math.sin(dLon / 2) ** 2;
@@ -682,13 +827,15 @@
   const savedLog = store.get(KEYS.log, []);
   const state = {
     start: store.get(KEYS.start, null), // { label, lat, lon }
-    dest: null,                         // { label, lat, lon, osm }
+    lastStart: null,                    // survives retyping the start, to keep its suggestions local
+    dest: null,                         // { label, lat, lon, osm, streetOnly }
     destTyped: '',                      // what the driver typed before picking a suggestion
     typeOverride: null,
     route: null,                        // { miles, minutes, approx }
     milesEdited: false,
     log: Array.isArray(savedLog) ? savedLog : [],
   };
+  state.lastStart = state.start;
   let routeToken = 0;
 
   const num = value => {
@@ -740,7 +887,7 @@
   // ---------------------------------------------------------------------
   // Address fields (suggestions while typing, full lookup on Enter / paste / blur)
   // ---------------------------------------------------------------------
-  function setupAddressField({ input, list, isResolved, onInput, onResolve }) {
+  function setupAddressField({ input, list, bias, globalFallback, isResolved, onInput, onResolve }) {
     let items = [];
     let active = -1;
     let timer = 0;
@@ -775,11 +922,29 @@
       }
     }
 
-    function pick(item) {
+    async function pick(item) {
       const typed = input.value;
       cancel();
       input.value = item.label;
-      onResolve(item, typed);
+      lastLookup = item.label;
+      let point = item;
+      if (item.streetLine) {
+        // The suggestion only knows the street, so find the house on it.
+        const id = lookupId;
+        setStatus('Finding the exact address…');
+        const house = await locateHouse(item.streetLine, item).catch(() => null);
+        if (id !== lookupId || input.value !== item.label) return;
+        setStatus('');
+        point = house ? { ...item, lat: house.lat, lon: house.lon } : { ...item, streetOnly: true };
+      }
+      onResolve(point, typed);
+    }
+
+    // On a phone the keyboard covers the list, so the field moves to the top of the screen.
+    function makeRoom() {
+      const view = window.visualViewport;
+      const bottom = view ? view.offsetTop + view.height : window.innerHeight;
+      if (list.getBoundingClientRect().bottom > bottom) input.scrollIntoView({ block: 'start', behavior: 'smooth' });
     }
 
     function show(results) {
@@ -796,18 +961,29 @@
         li.addEventListener('click', () => pick(item));
         return li;
       }));
-      list.hidden = !results.length;
-      input.setAttribute('aria-expanded', String(results.length > 0));
+      if (!results.length) {
+        const none = el('li', 'sug-empty', 'No matches yet. Keep typing, or press Enter to look up the full address.');
+        none.setAttribute('role', 'option');
+        none.setAttribute('aria-disabled', 'true');
+        list.append(none);
+      }
+      list.hidden = false;
+      input.setAttribute('aria-expanded', 'true');
+      makeRoom();
     }
 
     async function suggest() {
       const query = input.value.trim();
-      if (query.length < MIN_SUGGEST_CHARS) return close();
       if (controller) controller.abort();
       controller = new AbortController();
+      const { signal } = controller;
       try {
-        const results = await photonSearch(query, state.start, controller.signal);
-        if (document.activeElement === input && input.value.trim() === query) show(results);
+        const near = bias();
+        let results = await suggestAddresses(query, near, signal);
+        if (results && !results.length && near && globalFallback) results = await suggestAddresses(query, null, signal);
+        if (document.activeElement !== input || input.value.trim() !== query) return;
+        if (results) show(results);
+        else close();
       } catch (err) {
         if (err.name !== 'AbortError') close();
       }
@@ -822,7 +998,7 @@
       lastLookup = query;
       setStatus('Looking up address…');
       try {
-        const hit = await geocode(query, state.start);
+        const hit = await geocode(query, bias());
         if (id !== lookupId || input.value.trim() !== query) return;
         if (hit) {
           setStatus('');
@@ -881,7 +1057,10 @@
     clearRoute();
     const token = routeToken;
     if (!state.start || !state.dest) {
-      setStatus(state.dest ? 'Set a starting point to calculate the distance.' : '');
+      setStatus(state.start ? ''
+        : state.dest ? 'Set a starting point to calculate the distance.'
+        : els.dest.value.trim() ? 'Set a starting point above to get nearby suggestions.'
+        : '');
       render();
       return;
     }
@@ -892,12 +1071,15 @@
     state.route = route;
     state.milesEdited = false;
     els.miles.value = route.miles.toFixed(1);
-    setStatus(route.approx ? 'Routing is unavailable, so this is a straight-line estimate.' : '');
+    setStatus(route.approx ? 'Routing is unavailable, so this is a straight-line estimate.'
+      : state.dest.streetOnly ? 'That house number is not on the map, so the distance is to its street and may be a little off.'
+      : '');
     render();
   }
 
   function setStart(point) {
     state.start = { label: point.label, lat: point.lat, lon: point.lon };
+    state.lastStart = state.start;
     store.set(KEYS.start, state.start);
     updateRoute();
   }
@@ -905,6 +1087,8 @@
   const startField = setupAddressField({
     input: els.start,
     list: els.startList,
+    bias: () => state.lastStart,
+    globalFallback: true,
     isResolved: () => !!state.start,
     onInput() {
       state.start = null;
@@ -917,6 +1101,8 @@
   const destField = setupAddressField({
     input: els.dest,
     list: els.destList,
+    bias: () => state.start,
+    globalFallback: false,
     isResolved: () => !!state.dest,
     onInput() {
       state.dest = null;
