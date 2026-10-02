@@ -354,7 +354,7 @@
 
 <header class="topbar">
   <!-- Bump the version on every change, so the copy on GitHub Pages can be told from an older one. -->
-  <h1>Dash Check <span class="version">v3</span></h1>
+  <h1>Dash Check <span class="version">v4</span></h1>
   <button id="themeToggle" class="btn small" type="button"></button>
 </header>
 
@@ -497,7 +497,7 @@
 
   <footer>
     Map data © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors.
-    Search by Photon and Nominatim, routing by OSRM. Drive times do not include traffic.
+    Search by Photon and Nominatim, routing by Valhalla. Routes avoid highways and toll roads. Drive times do not include traffic.
   </footer>
 </main>
 
@@ -512,10 +512,15 @@
   // ---------------------------------------------------------------------
   const PHOTON_URL = 'https://photon.komoot.io/api/';          // type-ahead suggestions
   const NOMINATIM_URL = 'https://nominatim.openstreetmap.org'; // full-address lookups
-  const ROUTE_URLS = [
+  const VALHALLA_URL = 'https://valhalla1.openstreetmap.de/route'; // main router: can avoid highways and tolls
+  const OSRM_URLS = [                                              // backups: cannot avoid anything
     'https://router.project-osrm.org/route/v1/driving/',
     'https://routing.openstreetmap.de/routed-car/route/v1/driving/',
   ];
+  // Routes never use highways or toll roads. If no such route exists, they are
+  // avoided as far as possible instead.
+  const AVOID_STRICT = { exclude_highways: true, exclude_tolls: true };
+  const AVOID_SOFT = { use_highways: 0, use_tolls: 0 };
 
   const METERS_PER_MILE = 1609.344;
   const FALLBACK_MPH = 25;     // used when there is no real route to take the pace from
@@ -777,15 +782,37 @@
     return { miles, minutes: miles / FALLBACK_MPH * 60, approx: true };
   }
 
+  // Returns null when Valhalla has no route under the given restrictions.
+  async function valhallaRoute(a, b, avoid) {
+    const request = {
+      locations: [{ lat: a.lat, lon: a.lon }, { lat: b.lat, lon: b.lon }],
+      costing: 'auto',
+      costing_options: { auto: avoid },
+      units: 'miles',
+      directions_type: 'none',
+    };
+    const res = await fetch(`${VALHALLA_URL}?json=${encodeURIComponent(JSON.stringify(request))}`);
+    if (res.status === 400) return null;
+    if (!res.ok) throw new Error(`Valhalla ${res.status}`);
+    const { summary } = (await res.json()).trip;
+    return { miles: summary.length, minutes: summary.time / 60, approx: false, highway: summary.has_highway, toll: summary.has_toll };
+  }
+
   async function fetchRoute(a, b) {
-    for (const base of ROUTE_URLS) {
+    try {
+      const route = await valhallaRoute(a, b, AVOID_STRICT) || await valhallaRoute(a, b, AVOID_SOFT);
+      if (route) return route;
+    } catch (err) {
+      // Valhalla is down; fall back to the routers that cannot avoid highways.
+    }
+    for (const base of OSRM_URLS) {
       try {
         const res = await fetch(`${base}${a.lon},${a.lat};${b.lon},${b.lat}?overview=false`);
         if (!res.ok) continue;
         const data = await res.json();
         if (data.code !== 'Ok' || !data.routes || !data.routes.length) continue;
         const route = data.routes[0];
-        return { miles: route.distance / METERS_PER_MILE, minutes: route.duration / 60, approx: false };
+        return { miles: route.distance / METERS_PER_MILE, minutes: route.duration / 60, approx: false, unfiltered: true };
       } catch (err) {
         // Try the next server.
       }
@@ -1071,10 +1098,18 @@
     state.route = route;
     state.milesEdited = false;
     els.miles.value = route.miles.toFixed(1);
-    setStatus(route.approx ? 'Routing is unavailable, so this is a straight-line estimate.'
-      : state.dest.streetOnly ? 'That house number is not on the map, so the distance is to its street and may be a little off.'
-      : '');
+    setStatus(routeNotes(route, state.dest).join(' '));
     render();
+  }
+
+  function routeNotes(route, dest) {
+    if (route.approx) return ['Routing is unavailable, so this is a straight-line estimate.'];
+    const notes = [];
+    const unavoidable = [route.highway && 'a highway', route.toll && 'a toll road'].filter(Boolean).join(' and ');
+    if (route.unfiltered) notes.push('The backup router was used, so this route may include highways or toll roads.');
+    else if (unavoidable) notes.push(`There is no way there without ${unavoidable}, so this route uses one.`);
+    if (dest.streetOnly) notes.push('That house number is not on the map, so the distance is to its street and may be a little off.');
+    return notes;
   }
 
   function setStart(point) {
