@@ -1,0 +1,1209 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0d1014">
+<title>Dash Check</title>
+<script>
+  // Set the theme before first paint so there is no light/dark flash.
+  (function () {
+    var theme;
+    try { theme = JSON.parse(localStorage.getItem('dashcheck.theme')); } catch (e) {}
+    if (theme !== 'light' && theme !== 'dark') {
+      theme = window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+    }
+    document.documentElement.dataset.theme = theme;
+  })();
+</script>
+<style>
+  :root {
+    color-scheme: light;
+    --bg: #f2f4f7;
+    --surface: #ffffff;
+    --surface-2: #eef1f5;
+    --border: #d3d9e2;
+    --text: #11151a;
+    --muted: #586271;
+    --accent: #0b63c4;
+    --accent-text: #ffffff;
+    --good: #12733a;
+    --good-bg: #e0f3e7;
+    --warn: #8f5400;
+    --warn-bg: #fcefd3;
+    --bad: #b3261e;
+    --bad-bg: #fbe3e1;
+    --shadow: 0 8px 24px rgba(17, 21, 26, 0.16);
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --bg: #0d1014;
+    --surface: #171b21;
+    --surface-2: #20262e;
+    --border: #2f3742;
+    --text: #f1f4f8;
+    --muted: #9ba6b5;
+    --accent: #58a6ff;
+    --accent-text: #06121f;
+    --good: #62d68c;
+    --good-bg: #12301f;
+    --warn: #f2b84b;
+    --warn-bg: #33270d;
+    --bad: #ff8a80;
+    --bad-bg: #3a1614;
+    --shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  }
+
+  *, *::before, *::after { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 16px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  h1, h2, p, dl, dd { margin: 0; }
+
+  .topbar {
+    position: sticky;
+    top: 0;
+    z-index: 30;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: calc(10px + env(safe-area-inset-top)) 16px 10px;
+    background: var(--bg);
+    border-bottom: 1px solid var(--border);
+  }
+  .topbar h1 { font-size: 20px; letter-spacing: -0.01em; }
+
+  main {
+    display: grid;
+    gap: 12px;
+    max-width: 1040px;
+    margin: 0 auto;
+    padding: 12px 16px calc(24px + env(safe-area-inset-bottom));
+  }
+  @media (min-width: 820px) {
+    main { grid-template-columns: 1fr 1fr; align-items: start; }
+    #historyCard, footer { grid-column: 1 / -1; }
+  }
+
+  .card {
+    display: grid;
+    gap: 14px;
+    padding: 16px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+  }
+  .card h2 {
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+  .card-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+
+  /* ---------- form controls ---------- */
+  .field { display: grid; gap: 6px; min-width: 0; }
+  label, .label { font-size: 14px; font-weight: 600; }
+  .label-row { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+  .hint { font-size: 13px; color: var(--muted); }
+  .row { display: flex; gap: 8px; }
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; align-items: end; }
+
+  input[type="text"], input[type="number"] {
+    width: 100%;
+    height: 48px;
+    padding: 0 12px;
+    font: inherit;
+    font-size: 17px;
+    color: var(--text);
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+  }
+  input::placeholder { color: var(--muted); opacity: 0.8; }
+  input[type="number"] { appearance: textfield; -moz-appearance: textfield; font-variant-numeric: tabular-nums; }
+  input[type="number"]::-webkit-outer-spin-button,
+  input[type="number"]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+
+  input:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  /* Input with a unit label attached ($, min, mi). */
+  .affix {
+    display: flex;
+    align-items: center;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+  }
+  .affix:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .affix > span { padding: 0 12px; color: var(--muted); font-weight: 600; }
+  .affix > span:first-child { padding-right: 0; }
+  .affix > span:last-child { padding-left: 0; }
+  .affix input { min-width: 0; background: transparent; border: 0; outline: none; }
+
+  .btn {
+    min-height: 48px;
+    padding: 0 16px;
+    font: inherit;
+    font-weight: 600;
+    color: var(--text);
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    cursor: pointer;
+  }
+  .btn.primary { color: var(--accent-text); background: var(--accent); border-color: var(--accent); }
+  .btn.small { min-height: 40px; padding: 0 12px; font-size: 14px; }
+  .btn.icon { flex: none; display: grid; place-items: center; width: 48px; padding: 0; }
+  .btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+  .link {
+    justify-self: start;
+    padding: 6px 0;
+    font: inherit;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--accent);
+    background: none;
+    border: 0;
+    cursor: pointer;
+  }
+  .link.danger { color: var(--bad); }
+
+  /* ---------- address autocomplete ---------- */
+  .combo { position: relative; flex: 1; min-width: 0; }
+  .suggestions {
+    position: absolute;
+    z-index: 20;
+    top: calc(100% + 4px);
+    left: 0;
+    right: 0;
+    max-height: 290px;
+    margin: 0;
+    padding: 4px;
+    overflow-y: auto;
+    list-style: none;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    box-shadow: var(--shadow);
+  }
+  .suggestions li { padding: 9px 10px; border-radius: 8px; cursor: pointer; }
+  .suggestions li:hover, .suggestions li[aria-selected="true"] { background: var(--surface-2); }
+  .sug-main { display: block; font-weight: 600; }
+  .sug-sub { display: block; font-size: 13px; color: var(--muted); }
+
+  /* ---------- location type ---------- */
+  .chips { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+  @media (max-width: 380px) { .chips { grid-template-columns: repeat(2, 1fr); } }
+  .chip {
+    min-height: 44px;
+    padding: 0 4px;
+    font: inherit;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text);
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    cursor: pointer;
+  }
+  .chip[aria-pressed="true"] { color: var(--accent-text); background: var(--accent); border-color: var(--accent); }
+  .flag {
+    padding: 8px 10px;
+    font-size: 13px;
+    color: var(--warn);
+    background: var(--warn-bg);
+    border-radius: 8px;
+  }
+
+  /* ---------- round-trip switch ---------- */
+  .switch { position: relative; display: flex; align-items: center; gap: 10px; min-height: 48px; cursor: pointer; }
+  .switch input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+  .switch .track {
+    position: relative;
+    flex: none;
+    width: 46px;
+    height: 28px;
+    background: var(--border);
+    border-radius: 999px;
+    transition: background 0.15s;
+  }
+  .switch .track::after {
+    content: "";
+    position: absolute;
+    top: 3px;
+    left: 3px;
+    width: 22px;
+    height: 22px;
+    background: #fff;
+    border-radius: 50%;
+    transition: transform 0.15s;
+  }
+  .switch input:checked + .track { background: var(--accent); }
+  .switch input:checked + .track::after { transform: translateX(18px); }
+  .switch input:focus-visible + .track { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .switch small { display: block; font-size: 12px; font-weight: 400; color: var(--muted); }
+
+  /* ---------- results ---------- */
+  .result { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px 12px; }
+  .rate {
+    font-size: clamp(44px, 13vw, 60px);
+    font-weight: 750;
+    line-height: 1;
+    letter-spacing: -0.02em;
+    font-variant-numeric: tabular-nums;
+  }
+  .rate .unit { margin-left: 4px; font-size: 18px; font-weight: 600; letter-spacing: 0; color: var(--muted); }
+  .rate.good { color: var(--good); }
+  .rate.warn { color: var(--warn); }
+  .rate.bad { color: var(--bad); }
+  .pill { padding: 6px 12px; font-size: 14px; font-weight: 650; border-radius: 999px; }
+  .pill.good { color: var(--good); background: var(--good-bg); }
+  .pill.warn { color: var(--warn); background: var(--warn-bg); }
+  .pill.bad { color: var(--bad); background: var(--bad-bg); }
+
+  .stats { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .stats > div { padding: 10px 12px; background: var(--surface-2); border-radius: 10px; }
+  .stats dt { font-size: 12px; color: var(--muted); }
+  .stats dd { font-size: 20px; font-weight: 650; font-variant-numeric: tabular-nums; }
+  @media (min-width: 560px) { .stats.four { grid-template-columns: repeat(4, 1fr); } }
+
+  .target { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .target .affix { width: 150px; }
+  .target input { height: 40px; text-align: right; }
+  .actions { display: grid; grid-template-columns: auto 1fr; gap: 8px; }
+
+  /* ---------- shift log ---------- */
+  .table-wrap { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; font-variant-numeric: tabular-nums; }
+  th, td { padding: 10px 5px; text-align: right; white-space: nowrap; border-bottom: 1px solid var(--border); }
+  th { font-size: 12px; font-weight: 600; color: var(--muted); }
+  th:first-child, td:first-child { padding-left: 0; text-align: left; }
+  th:last-child, td:last-child { padding-right: 0; }
+  td.addr { min-width: 110px; white-space: normal; }
+  @media (max-width: 380px) {
+    table { font-size: 13px; }
+    th, td { padding: 10px 3px; }
+    td.addr { min-width: 84px; }
+  }
+  .addr-text { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; }
+  .tag {
+    display: inline-block;
+    margin: 2px 4px 0 0;
+    padding: 1px 7px;
+    font-size: 11px;
+    color: var(--muted);
+    background: var(--surface-2);
+    border-radius: 999px;
+  }
+  .tag.flagged { color: var(--warn); background: var(--warn-bg); }
+  .row-delete {
+    width: 32px;
+    height: 36px;
+    padding: 0;
+    font-size: 16px;
+    color: var(--muted);
+    background: none;
+    border: 0;
+    border-radius: 8px;
+    cursor: pointer;
+  }
+  .empty { padding: 12px 0; text-align: center; }
+
+  .toast {
+    position: fixed;
+    left: 50%;
+    bottom: calc(20px + env(safe-area-inset-bottom));
+    z-index: 40;
+    padding: 10px 16px;
+    font-weight: 600;
+    color: var(--bg);
+    background: var(--text);
+    border-radius: 999px;
+    box-shadow: var(--shadow);
+    transform: translateX(-50%);
+  }
+  footer { font-size: 12px; text-align: center; color: var(--muted); }
+  footer a { color: inherit; }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <h1>Dash Check</h1>
+  <button id="themeToggle" class="btn small" type="button"></button>
+</header>
+
+<main>
+  <section class="card" aria-labelledby="inputTitle">
+    <h2 id="inputTitle">Order</h2>
+
+    <div class="field">
+      <label for="start">Starting from</label>
+      <div class="row">
+        <div class="combo">
+          <input id="start" type="text" autocomplete="off" spellcheck="false" placeholder="Restaurant zone or address"
+                 role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="startList">
+          <ul id="startList" class="suggestions" role="listbox" hidden></ul>
+        </div>
+        <button id="locate" class="btn icon" type="button" aria-label="Use my current location" title="Use my current location">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="2" fill="currentColor"/>
+            <path d="M12 2v3M12 19v3M2 12h3M19 12h3"/>
+          </svg>
+        </button>
+      </div>
+    </div>
+
+    <div class="field">
+      <label for="dest">Drop-off address</label>
+      <div class="combo">
+        <input id="dest" type="text" autocomplete="off" spellcheck="false" placeholder="Type or paste the address"
+               role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="destList">
+        <ul id="destList" class="suggestions" role="listbox" hidden></ul>
+      </div>
+      <p id="routeStatus" class="hint" role="status" hidden></p>
+    </div>
+
+    <div class="field">
+      <div class="label-row">
+        <span class="label" id="typeLabel">Location type</span>
+        <span id="typeSource" class="hint"></span>
+      </div>
+      <div id="typeChips" class="chips" role="group" aria-labelledby="typeLabel"></div>
+      <p id="typeWarning" class="flag" hidden></p>
+    </div>
+
+    <div class="grid-2">
+      <div class="field">
+        <label for="payout">Payout</label>
+        <div class="affix">
+          <span>$</span>
+          <input id="payout" type="number" inputmode="decimal" min="0" step="0.01" placeholder="0.00">
+        </div>
+      </div>
+      <div class="field">
+        <label for="minutes">Estimated time</label>
+        <div class="affix">
+          <input id="minutes" type="number" inputmode="decimal" min="0" step="1" placeholder="0">
+          <span>min</span>
+        </div>
+      </div>
+    </div>
+    <button id="useDrive" class="link" type="button" hidden></button>
+
+    <div class="grid-2">
+      <div class="field">
+        <label for="miles">Distance</label>
+        <div class="affix">
+          <input id="miles" type="number" inputmode="decimal" min="0" step="0.1" placeholder="0.0">
+          <span>mi</span>
+        </div>
+      </div>
+      <label class="switch">
+        <input id="roundTrip" type="checkbox">
+        <span class="track" aria-hidden="true"></span>
+        <span>Round trip<small>Count the drive back</small></span>
+      </label>
+    </div>
+  </section>
+
+  <section class="card" aria-labelledby="calcTitle">
+    <h2 id="calcTitle">Calculations</h2>
+
+    <div class="result">
+      <div id="rate" class="rate"><span id="hourly">—</span><span class="unit">/hr</span></div>
+      <span id="verdict" class="pill" hidden></span>
+    </div>
+    <p id="calcHint" class="hint"></p>
+
+    <dl class="stats">
+      <div><dt id="milesLabel">Distance</dt><dd id="statMiles">—</dd></div>
+      <div><dt>Drive time (one way)</dt><dd id="statDrive">—</dd></div>
+      <div><dt>Per mile</dt><dd id="statPerMile">—</dd></div>
+      <div><dt>Total time</dt><dd id="statTime">—</dd></div>
+    </dl>
+
+    <div class="target">
+      <label for="target">Hourly target</label>
+      <div class="affix">
+        <span>$</span>
+        <input id="target" type="number" inputmode="decimal" min="0" step="1">
+        <span>/hr</span>
+      </div>
+    </div>
+
+    <div class="actions">
+      <button id="clear" class="btn" type="button">Clear</button>
+      <button id="save" class="btn primary" type="button" disabled>Save order</button>
+    </div>
+  </section>
+
+  <section class="card" id="historyCard" aria-labelledby="logTitle">
+    <div class="card-head">
+      <h2 id="logTitle">Shift log</h2>
+      <button id="clearLog" class="link danger" type="button" hidden>Clear log</button>
+    </div>
+
+    <dl class="stats four">
+      <div><dt>Orders</dt><dd id="sumOrders">0</dd></div>
+      <div><dt>Earned</dt><dd id="sumEarned">$0.00</dd></div>
+      <div><dt>Average per hour</dt><dd id="sumHourly">—</dd></div>
+      <div><dt>Miles</dt><dd id="sumMiles">—</dd></div>
+    </dl>
+    <p id="summaryNote" class="hint" hidden></p>
+
+    <div id="logWrap" class="table-wrap" hidden>
+      <table>
+        <thead>
+          <tr>
+            <th scope="col">Drop-off</th>
+            <th scope="col">Pay</th>
+            <th scope="col">Mi</th>
+            <th scope="col">Min</th>
+            <th scope="col">$/hr</th>
+            <th scope="col" aria-label="Remove"></th>
+          </tr>
+        </thead>
+        <tbody id="logBody"></tbody>
+      </table>
+    </div>
+    <p id="logEmpty" class="hint empty">No orders saved yet. Saved orders show up here.</p>
+  </section>
+
+  <footer>
+    Map data © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors.
+    Search by Photon and Nominatim, routing by OSRM. Drive times do not include traffic.
+  </footer>
+</main>
+
+<div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+
+<script>
+(() => {
+  'use strict';
+
+  // ---------------------------------------------------------------------
+  // Config
+  // ---------------------------------------------------------------------
+  const PHOTON_URL = 'https://photon.komoot.io/api/';          // type-ahead suggestions
+  const NOMINATIM_URL = 'https://nominatim.openstreetmap.org'; // full-address lookups
+  const ROUTE_URLS = [
+    'https://router.project-osrm.org/route/v1/driving/',
+    'https://routing.openstreetmap.de/routed-car/route/v1/driving/',
+  ];
+
+  const METERS_PER_MILE = 1609.344;
+  const FALLBACK_MPH = 25;     // used when there is no real route to take the pace from
+  const ROAD_FACTOR = 1.3;     // straight-line distance -> rough road distance
+  const DEFAULT_TARGET = 25;   // $/hr
+  const BORDERLINE_RATIO = 0.75;
+  const SUGGEST_DELAY_MS = 300;
+  const MIN_SUGGEST_CHARS = 3;
+  const MIN_LOOKUP_CHARS = 5;
+
+  const KEYS = {
+    theme: 'dashcheck.theme',
+    start: 'dashcheck.start',
+    log: 'dashcheck.log',
+    target: 'dashcheck.target',
+    roundTrip: 'dashcheck.roundTrip',
+  };
+
+  // ---------------------------------------------------------------------
+  // Location classifier
+  // ---------------------------------------------------------------------
+  const LOCATION_TYPES = ['House', 'Apartment', 'Building', 'Business'];
+
+  const TYPE_WARNINGS = {
+    Apartment: 'Apartment: parking, gate codes and finding the unit can add time.',
+    Building: 'Multi-unit building: check for a suite or floor number before you park.',
+    Business: 'Business: parking and the hand-off can be slow. You may need to go inside or call.',
+  };
+
+  // "Center St", "Plaza Dr", "School Rd" and so on are street names, not businesses.
+  const STREET_SUFFIX = '(?:st|street|rd|road|ave|avenue|blvd|boulevard|dr|drive|ln|lane|way|ct|court|pl|place|pkwy|parkway|hwy|highway|cir|circle|ter|terrace|trl|trail)';
+
+  const APARTMENT_RE = /\b(?:apt|apartments?|unit|condo(?:s|minium|miniums)?)\b|#\s*\w/;
+  const BUILDING_RE = /\b(?:suite|ste|building|bldg|floor)\b/;
+  const BUSINESS_RE = new RegExp(
+    '\\b(?:llc|inc|corp(?:oration)?|hospital|clinic|bank|cafe|restaurant|shops?|stores?|mall|plaza|' +
+    'cent(?:er|re)|offices?|towers?|hotel|school|univ\\w*)\\b(?!\\.?\\s+' + STREET_SUFFIX + '\\b)'
+  );
+
+  const stripAccents = text => text.normalize('NFD').replace(/[̀-ͯ]/g, '');
+
+  /**
+   * Tags an address as House, Apartment, Building or Business from keywords in its text.
+   * A unit designator wins over a business word ("Plaza Apartments, Apt 4" is an apartment).
+   */
+  function classifyLocationType(addressText) {
+    const text = stripAccents(String(addressText || '')).toLowerCase();
+    if (APARTMENT_RE.test(text)) return 'Apartment';
+    if (BUSINESS_RE.test(text)) return 'Business';
+    if (BUILDING_RE.test(text)) return 'Building';
+    return 'House';
+  }
+
+  // Second opinion from the OpenStreetMap tags on a geocoder result, used only
+  // when the address text itself has no keywords.
+  function classifyFromOsm(osm) {
+    if (!osm || !osm.key) return null;
+    if (osm.key === 'building') {
+      if (['apartments', 'dormitory'].includes(osm.value)) return 'Apartment';
+      if (['commercial', 'retail', 'office', 'industrial', 'hotel', 'hospital', 'school', 'university'].includes(osm.value)) return 'Business';
+      return null;
+    }
+    return ['amenity', 'shop', 'office', 'tourism', 'leisure', 'craft', 'healthcare'].includes(osm.key) ? 'Business' : null;
+  }
+
+  // ---------------------------------------------------------------------
+  // Geocoding and routing
+  // ---------------------------------------------------------------------
+  function photonParts(p) {
+    const street = [p.housenumber, p.street].filter(Boolean).join(' ');
+    const city = p.city || p.district || p.county;
+    const locality = [city !== p.name ? city : '', [p.state, p.postcode].filter(Boolean).join(' ')].filter(Boolean).join(', ');
+    if (p.name && street) return { main: p.name, sub: [street, locality].filter(Boolean).join(', ') };
+    return { main: p.name || street, sub: locality };
+  }
+
+  async function photonSearch(query, bias, signal) {
+    const params = new URLSearchParams({ q: query, limit: '5', lang: 'en' });
+    if (bias) {
+      params.set('lat', bias.lat);
+      params.set('lon', bias.lon);
+    }
+    const res = await fetch(`${PHOTON_URL}?${params}`, { signal });
+    if (!res.ok) throw new Error(`Photon ${res.status}`);
+    const data = await res.json();
+    return (data.features || []).map(feature => {
+      const p = feature.properties || {};
+      const [lon, lat] = feature.geometry.coordinates;
+      const { main, sub } = photonParts(p);
+      return { label: [main, sub].filter(Boolean).join(', '), main, sub, lat, lon, osm: { key: p.osm_key, value: p.osm_value } };
+    }).filter(item => item.main);
+  }
+
+  // Unit numbers only confuse the geocoder, so they are dropped from the query.
+  const UNIT_RE = /[,\s]*(?:\b(?:apt|apartment|unit|suite|ste|bldg)\b\.?|#)\s*[\w-]+/gi;
+
+  async function geocode(text, bias) {
+    const params = new URLSearchParams({ format: 'jsonv2', limit: '1', q: text.replace(UNIT_RE, '') });
+    if (bias) {
+      // Prefer matches near the driver; this is a hint, not a hard bound.
+      params.set('viewbox', [bias.lon - 0.5, bias.lat + 0.5, bias.lon + 0.5, bias.lat - 0.5].join(','));
+    }
+    const res = await fetch(`${NOMINATIM_URL}/search?${params}`);
+    if (!res.ok) throw new Error(`Nominatim ${res.status}`);
+    const [hit] = await res.json();
+    if (!hit) return null;
+    return { label: text, lat: Number(hit.lat), lon: Number(hit.lon), osm: { key: hit.category, value: hit.type } };
+  }
+
+  async function reverseGeocode(lat, lon) {
+    const params = new URLSearchParams({ format: 'jsonv2', lat, lon, zoom: '18' });
+    const res = await fetch(`${NOMINATIM_URL}/reverse?${params}`);
+    if (!res.ok) throw new Error(`Nominatim ${res.status}`);
+    const data = await res.json();
+    const a = data.address || {};
+    const street = [a.house_number, a.road].filter(Boolean).join(' ');
+    return [street, a.city || a.town || a.village || a.suburb].filter(Boolean).join(', ') || data.display_name || '';
+  }
+
+  function haversineMiles(a, b) {
+    const rad = deg => deg * Math.PI / 180;
+    const dLat = rad(b.lat - a.lat);
+    const dLon = rad(b.lon - a.lon);
+    const h = Math.sin(dLat / 2) ** 2 + Math.cos(rad(a.lat)) * Math.cos(rad(b.lat)) * Math.sin(dLon / 2) ** 2;
+    return 3958.8 * 2 * Math.asin(Math.sqrt(h));
+  }
+
+  function estimateRoute(a, b) {
+    const miles = haversineMiles(a, b) * ROAD_FACTOR;
+    return { miles, minutes: miles / FALLBACK_MPH * 60, approx: true };
+  }
+
+  async function fetchRoute(a, b) {
+    for (const base of ROUTE_URLS) {
+      try {
+        const res = await fetch(`${base}${a.lon},${a.lat};${b.lon},${b.lat}?overview=false`);
+        if (!res.ok) continue;
+        const data = await res.json();
+        if (data.code !== 'Ok' || !data.routes || !data.routes.length) continue;
+        const route = data.routes[0];
+        return { miles: route.distance / METERS_PER_MILE, minutes: route.duration / 60, approx: false };
+      } catch (err) {
+        // Try the next server.
+      }
+    }
+    return estimateRoute(a, b);
+  }
+
+  // ---------------------------------------------------------------------
+  // DOM, storage and state
+  // ---------------------------------------------------------------------
+  const els = {};
+  for (const id of [
+    'themeToggle', 'start', 'startList', 'locate', 'dest', 'destList', 'routeStatus',
+    'typeSource', 'typeChips', 'typeWarning', 'payout', 'minutes', 'useDrive', 'miles', 'roundTrip',
+    'rate', 'hourly', 'verdict', 'calcHint', 'milesLabel', 'statMiles', 'statDrive', 'statPerMile', 'statTime',
+    'target', 'clear', 'save', 'clearLog', 'sumOrders', 'sumEarned', 'sumHourly', 'sumMiles', 'summaryNote',
+    'logWrap', 'logBody', 'logEmpty', 'toast',
+  ]) {
+    els[id] = document.getElementById(id);
+  }
+
+  const store = {
+    get(key, fallback) {
+      try {
+        const raw = localStorage.getItem(key);
+        return raw == null ? fallback : JSON.parse(raw);
+      } catch (err) {
+        return fallback;
+      }
+    },
+    set(key, value) {
+      try { localStorage.setItem(key, JSON.stringify(value)); } catch (err) {}
+    },
+    remove(key) {
+      try { localStorage.removeItem(key); } catch (err) {}
+    },
+  };
+
+  const savedLog = store.get(KEYS.log, []);
+  const state = {
+    start: store.get(KEYS.start, null), // { label, lat, lon }
+    dest: null,                         // { label, lat, lon, osm }
+    destTyped: '',                      // what the driver typed before picking a suggestion
+    typeOverride: null,
+    route: null,                        // { miles, minutes, approx }
+    milesEdited: false,
+    log: Array.isArray(savedLog) ? savedLog : [],
+  };
+  let routeToken = 0;
+
+  const num = value => {
+    const n = parseFloat(value);
+    return Number.isFinite(n) && n > 0 ? n : 0;
+  };
+  const sum = (list, pick) => list.reduce((total, item) => total + (pick(item) || 0), 0);
+  const money = n => `$${n.toFixed(2)}`;
+  const fmtMin = n => {
+    const total = Math.round(n);
+    return total < 60 ? `${total} min` : `${Math.floor(total / 60)} h ${total % 60} min`;
+  };
+
+  function el(tag, className, text) {
+    const node = document.createElement(tag);
+    if (className) node.className = className;
+    if (text != null) node.textContent = text;
+    return node;
+  }
+
+  function setStatus(message) {
+    els.routeStatus.textContent = message;
+    els.routeStatus.hidden = !message;
+  }
+
+  let toastTimer = 0;
+  function toast(message) {
+    els.toast.textContent = message;
+    els.toast.hidden = false;
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => { els.toast.hidden = true; }, 2200);
+  }
+
+  // ---------------------------------------------------------------------
+  // Theme
+  // ---------------------------------------------------------------------
+  function applyTheme(theme) {
+    document.documentElement.dataset.theme = theme;
+    els.themeToggle.textContent = theme === 'dark' ? 'Light mode' : 'Dark mode';
+    document.querySelector('meta[name="theme-color"]').content = theme === 'dark' ? '#0d1014' : '#f2f4f7';
+  }
+
+  els.themeToggle.addEventListener('click', () => {
+    const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
+    store.set(KEYS.theme, next);
+    applyTheme(next);
+  });
+
+  // ---------------------------------------------------------------------
+  // Address fields (suggestions while typing, full lookup on Enter / paste / blur)
+  // ---------------------------------------------------------------------
+  function setupAddressField({ input, list, isResolved, onInput, onResolve }) {
+    let items = [];
+    let active = -1;
+    let timer = 0;
+    let controller = null;
+    let lookupId = 0;
+    let lastLookup = '';
+
+    function close() {
+      items = [];
+      active = -1;
+      list.replaceChildren();
+      list.hidden = true;
+      input.setAttribute('aria-expanded', 'false');
+      input.removeAttribute('aria-activedescendant');
+    }
+
+    function cancel() {
+      clearTimeout(timer);
+      if (controller) controller.abort();
+      lookupId++;
+      close();
+    }
+
+    function setActive(index) {
+      active = index;
+      [...list.children].forEach((li, i) => li.setAttribute('aria-selected', String(i === index)));
+      if (index >= 0) {
+        input.setAttribute('aria-activedescendant', list.children[index].id);
+        list.children[index].scrollIntoView({ block: 'nearest' });
+      } else {
+        input.removeAttribute('aria-activedescendant');
+      }
+    }
+
+    function pick(item) {
+      const typed = input.value;
+      cancel();
+      input.value = item.label;
+      onResolve(item, typed);
+    }
+
+    function show(results) {
+      items = results;
+      active = -1;
+      list.replaceChildren(...results.map((item, i) => {
+        const li = el('li');
+        li.id = `${list.id}-${i}`;
+        li.setAttribute('role', 'option');
+        li.setAttribute('aria-selected', 'false');
+        li.append(el('span', 'sug-main', item.main));
+        if (item.sub) li.append(el('span', 'sug-sub', item.sub));
+        li.addEventListener('mousedown', event => event.preventDefault()); // keep focus in the input
+        li.addEventListener('click', () => pick(item));
+        return li;
+      }));
+      list.hidden = !results.length;
+      input.setAttribute('aria-expanded', String(results.length > 0));
+    }
+
+    async function suggest() {
+      const query = input.value.trim();
+      if (query.length < MIN_SUGGEST_CHARS) return close();
+      if (controller) controller.abort();
+      controller = new AbortController();
+      try {
+        const results = await photonSearch(query, state.start, controller.signal);
+        if (document.activeElement === input && input.value.trim() === query) show(results);
+      } catch (err) {
+        if (err.name !== 'AbortError') close();
+      }
+    }
+
+    // Resolves whatever text is in the field, for pasted or fully typed addresses.
+    async function lookup() {
+      const query = input.value.trim();
+      if (query.length < MIN_LOOKUP_CHARS) return;
+      cancel();
+      const id = lookupId;
+      lastLookup = query;
+      setStatus('Looking up address…');
+      try {
+        const hit = await geocode(query, state.start);
+        if (id !== lookupId || input.value.trim() !== query) return;
+        if (hit) {
+          setStatus('');
+          onResolve(hit, '');
+        } else {
+          setStatus('Could not find that address. You can still enter the distance by hand.');
+        }
+      } catch (err) {
+        if (id === lookupId) setStatus('Address lookup failed. Check your connection, or enter the distance by hand.');
+      }
+    }
+
+    input.addEventListener('input', () => {
+      onInput();
+      clearTimeout(timer);
+      timer = setTimeout(suggest, SUGGEST_DELAY_MS);
+    });
+
+    input.addEventListener('paste', () => setTimeout(lookup, 0));
+
+    input.addEventListener('keydown', event => {
+      if (event.key === 'ArrowDown' && items.length) {
+        event.preventDefault();
+        setActive((active + 1) % items.length);
+      } else if (event.key === 'ArrowUp' && items.length) {
+        event.preventDefault();
+        setActive((active - 1 + items.length) % items.length);
+      } else if (event.key === 'Enter') {
+        if (active >= 0) pick(items[active]);
+        else if (!isResolved()) lookup();
+      } else if (event.key === 'Escape') {
+        close();
+      }
+    });
+
+    // Delayed so a tap on a suggestion lands before the list goes away.
+    input.addEventListener('blur', () => setTimeout(() => {
+      if (document.activeElement === input) return;
+      close();
+      if (!isResolved() && input.value.trim() !== lastLookup) lookup();
+    }, 200));
+
+    return { cancel };
+  }
+
+  // ---------------------------------------------------------------------
+  // Route
+  // ---------------------------------------------------------------------
+  function clearRoute() {
+    routeToken++;
+    state.route = null;
+    if (!state.milesEdited) els.miles.value = '';
+  }
+
+  async function updateRoute() {
+    clearRoute();
+    const token = routeToken;
+    if (!state.start || !state.dest) {
+      setStatus(state.dest ? 'Set a starting point to calculate the distance.' : '');
+      render();
+      return;
+    }
+    setStatus('Calculating route…');
+    render();
+    const route = await fetchRoute(state.start, state.dest);
+    if (token !== routeToken) return;
+    state.route = route;
+    state.milesEdited = false;
+    els.miles.value = route.miles.toFixed(1);
+    setStatus(route.approx ? 'Routing is unavailable, so this is a straight-line estimate.' : '');
+    render();
+  }
+
+  function setStart(point) {
+    state.start = { label: point.label, lat: point.lat, lon: point.lon };
+    store.set(KEYS.start, state.start);
+    updateRoute();
+  }
+
+  const startField = setupAddressField({
+    input: els.start,
+    list: els.startList,
+    isResolved: () => !!state.start,
+    onInput() {
+      state.start = null;
+      if (!els.start.value.trim()) store.remove(KEYS.start);
+      updateRoute();
+    },
+    onResolve: setStart,
+  });
+
+  const destField = setupAddressField({
+    input: els.dest,
+    list: els.destList,
+    isResolved: () => !!state.dest,
+    onInput() {
+      state.dest = null;
+      state.destTyped = '';
+      if (!els.dest.value.trim()) state.typeOverride = null;
+      updateRoute();
+      renderType();
+    },
+    onResolve(point, typed) {
+      state.dest = point;
+      state.destTyped = typed;
+      state.typeOverride = null;
+      renderType();
+      updateRoute();
+    },
+  });
+
+  els.locate.addEventListener('click', () => {
+    if (!navigator.geolocation) {
+      setStatus('This browser cannot share your location. Type a starting address instead.');
+      return;
+    }
+    startField.cancel();
+    setStatus('Finding your location…');
+    navigator.geolocation.getCurrentPosition(async position => {
+      const { latitude: lat, longitude: lon } = position.coords;
+      els.start.value = 'Current location';
+      setStart({ label: 'Current location', lat, lon });
+      try {
+        const label = await reverseGeocode(lat, lon);
+        if (label && state.start && state.start.lat === lat && state.start.lon === lon) {
+          els.start.value = label;
+          state.start.label = label;
+          store.set(KEYS.start, state.start);
+        }
+      } catch (err) {
+        // The coordinates are enough; the street name is only a label.
+      }
+    }, error => {
+      setStatus(error.code === error.PERMISSION_DENIED
+        ? 'Location is blocked. Allow location access (this needs an https page), or type a starting address.'
+        : 'Could not get your location. Type a starting address instead.');
+    }, { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 });
+  });
+
+  // ---------------------------------------------------------------------
+  // Location type
+  // ---------------------------------------------------------------------
+  function detectedType() {
+    const text = `${state.destTyped} ${els.dest.value}`.trim();
+    if (!text) return null;
+    const byKeyword = classifyLocationType(text);
+    if (byKeyword !== 'House') return byKeyword;
+    return classifyFromOsm(state.dest && state.dest.osm) || 'House';
+  }
+
+  const activeType = () => state.typeOverride || detectedType();
+
+  const chips = LOCATION_TYPES.map(type => {
+    const chip = el('button', 'chip', type);
+    chip.type = 'button';
+    chip.addEventListener('click', () => {
+      state.typeOverride = type === detectedType() ? null : type;
+      renderType();
+    });
+    return chip;
+  });
+  els.typeChips.append(...chips);
+
+  function renderType() {
+    const type = activeType();
+    chips.forEach(chip => chip.setAttribute('aria-pressed', String(chip.textContent === type)));
+    els.typeSource.textContent = state.typeOverride ? 'Set by you' : type ? 'Auto-detected' : 'Tap to set';
+    const warning = TYPE_WARNINGS[type];
+    els.typeWarning.textContent = warning ? `⚠ ${warning}` : '';
+    els.typeWarning.hidden = !warning;
+  }
+
+  // ---------------------------------------------------------------------
+  // Pay and time calculator
+  // ---------------------------------------------------------------------
+  function driveInfo() {
+    if (state.route && !state.milesEdited) return state.route;
+    const miles = num(els.miles.value);
+    if (!miles) return null;
+    // Hand-entered distance: reuse the route's pace if there is one.
+    const pace = state.route && state.route.miles > 0 ? state.route.minutes / state.route.miles : 60 / FALLBACK_MPH;
+    return { miles, minutes: miles * pace, approx: true };
+  }
+
+  function compute() {
+    const payout = num(els.payout.value);
+    const minutes = num(els.minutes.value);
+    const roundTrip = els.roundTrip.checked;
+    const drive = driveInfo();
+    const totalMinutes = minutes ? minutes + (roundTrip && drive ? drive.minutes : 0) : 0;
+    const totalMiles = drive ? drive.miles * (roundTrip ? 2 : 1) : 0;
+    return {
+      payout, minutes, roundTrip, drive, totalMinutes, totalMiles,
+      hourly: payout && totalMinutes ? payout / (totalMinutes / 60) : null,
+      perMile: payout && totalMiles ? payout / totalMiles : null,
+    };
+  }
+
+  function verdictFor(hourly) {
+    const ratio = hourly / (num(els.target.value) || DEFAULT_TARGET);
+    if (ratio >= 1) return ['good', 'Worth it'];
+    if (ratio >= BORDERLINE_RATIO) return ['warn', 'Borderline'];
+    return ['bad', 'Below target'];
+  }
+
+  function render() {
+    const c = compute();
+    const [tone, label] = c.hourly == null ? ['', ''] : verdictFor(c.hourly);
+
+    els.hourly.textContent = c.hourly == null ? '—' : money(c.hourly);
+    els.rate.className = `rate ${tone}`.trim();
+    els.verdict.textContent = label;
+    els.verdict.className = `pill ${tone}`.trim();
+    els.verdict.hidden = c.hourly == null;
+
+    els.milesLabel.textContent = c.roundTrip ? 'Distance (round trip)' : 'Distance';
+    els.statMiles.textContent = c.drive ? `${c.totalMiles.toFixed(1)} mi` : '—';
+    els.statDrive.textContent = c.drive ? `${c.drive.approx ? '≈ ' : ''}${fmtMin(c.drive.minutes)}` : '—';
+    els.statPerMile.textContent = c.perMile == null ? '—' : money(c.perMile);
+    els.statTime.textContent = c.totalMinutes ? fmtMin(c.totalMinutes) : '—';
+
+    let hint = '';
+    if (c.hourly == null) hint = 'Enter the payout and estimated time to see your hourly rate.';
+    else if (c.roundTrip && !c.drive) hint = 'Add a drop-off address or distance to count the drive back.';
+    else if (c.roundTrip) hint = `Includes ${fmtMin(c.drive.minutes)} to drive back.`;
+    els.calcHint.textContent = hint;
+    els.calcHint.hidden = !hint;
+
+    els.useDrive.hidden = !c.drive;
+    if (c.drive) els.useDrive.textContent = `Use the drive time (${Math.max(1, Math.ceil(c.drive.minutes))} min)`;
+    els.save.disabled = c.hourly == null;
+  }
+
+  els.payout.addEventListener('input', render);
+  els.minutes.addEventListener('input', render);
+
+  els.miles.addEventListener('input', () => {
+    state.milesEdited = true;
+    render();
+  });
+  els.miles.addEventListener('change', () => {
+    if (els.miles.value.trim()) return;
+    // Emptied by hand: fall back to the routed distance if there is one.
+    state.milesEdited = false;
+    if (state.route) els.miles.value = state.route.miles.toFixed(1);
+    render();
+  });
+
+  els.useDrive.addEventListener('click', () => {
+    const drive = driveInfo();
+    if (!drive) return;
+    els.minutes.value = Math.max(1, Math.ceil(drive.minutes));
+    render();
+  });
+
+  els.roundTrip.checked = store.get(KEYS.roundTrip, false) === true;
+  els.roundTrip.addEventListener('change', () => {
+    store.set(KEYS.roundTrip, els.roundTrip.checked);
+    render();
+  });
+
+  els.target.value = num(store.get(KEYS.target, DEFAULT_TARGET)) || DEFAULT_TARGET;
+  els.target.addEventListener('input', () => {
+    if (num(els.target.value)) store.set(KEYS.target, num(els.target.value));
+    render();
+  });
+
+  // ---------------------------------------------------------------------
+  // Order log
+  // ---------------------------------------------------------------------
+  function resetOrder() {
+    destField.cancel();
+    els.dest.value = '';
+    els.payout.value = '';
+    els.minutes.value = '';
+    els.miles.value = '';
+    state.dest = null;
+    state.destTyped = '';
+    state.typeOverride = null;
+    state.milesEdited = false;
+    clearRoute();
+    setStatus('');
+    renderType();
+    render();
+  }
+
+  function logRow(entry) {
+    const tr = el('tr');
+    const time = new Date(entry.ts).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+
+    const addr = el('td', 'addr');
+    addr.append(el('div', 'addr-text', entry.address || 'No address'), el('span', 'tag', time));
+    if (entry.type) addr.append(el('span', TYPE_WARNINGS[entry.type] ? 'tag flagged' : 'tag', entry.type));
+    if (entry.roundTrip) addr.append(el('span', 'tag', 'Round trip'));
+
+    const remove = el('button', 'row-delete', '✕');
+    remove.type = 'button';
+    remove.setAttribute('aria-label', `Remove the ${time} order`);
+    remove.addEventListener('click', () => {
+      state.log = state.log.filter(item => item.id !== entry.id);
+      store.set(KEYS.log, state.log);
+      renderLog();
+    });
+    const removeCell = el('td');
+    removeCell.append(remove);
+
+    tr.append(
+      addr,
+      el('td', '', money(entry.payout)),
+      el('td', '', entry.miles ? entry.miles.toFixed(1) : '—'),
+      el('td', '', String(Math.round(entry.minutes))),
+      el('td', '', money(entry.hourly)),
+      removeCell,
+    );
+    return tr;
+  }
+
+  function renderLog() {
+    const log = state.log;
+    const earned = sum(log, entry => entry.payout);
+    const minutes = sum(log, entry => entry.minutes);
+    const miles = sum(log, entry => entry.miles);
+    // Per-mile pay only counts the orders that have a distance.
+    const paidForMiles = sum(log.filter(entry => entry.miles), entry => entry.payout);
+
+    els.sumOrders.textContent = String(log.length);
+    els.sumEarned.textContent = money(earned);
+    els.sumHourly.textContent = minutes ? money(earned / (minutes / 60)) : '—';
+    els.sumMiles.textContent = miles ? miles.toFixed(1) : '—';
+
+    els.summaryNote.textContent = [
+      `${fmtMin(minutes)} on orders`,
+      miles ? `${money(paidForMiles / miles)} per mile` : '',
+    ].filter(Boolean).join(' · ');
+    els.summaryNote.hidden = !log.length;
+
+    els.logBody.replaceChildren(...log.map(logRow));
+    els.logWrap.hidden = !log.length;
+    els.logEmpty.hidden = log.length > 0;
+    els.clearLog.hidden = !log.length;
+  }
+
+  els.save.addEventListener('click', () => {
+    const c = compute();
+    if (c.hourly == null) return;
+    const now = Date.now();
+    state.log.unshift({
+      id: now,
+      ts: now,
+      address: els.dest.value.trim(),
+      type: activeType(),
+      payout: c.payout,
+      minutes: c.totalMinutes,
+      miles: c.totalMiles,
+      hourly: c.hourly,
+      roundTrip: c.roundTrip,
+    });
+    store.set(KEYS.log, state.log);
+    resetOrder();
+    renderLog();
+    toast('Order saved');
+  });
+
+  els.clear.addEventListener('click', resetOrder);
+
+  els.clearLog.addEventListener('click', () => {
+    if (!confirm('Clear every saved order from the log?')) return;
+    state.log = [];
+    store.set(KEYS.log, state.log);
+    renderLog();
+  });
+
+  // ---------------------------------------------------------------------
+  // Start
+  // ---------------------------------------------------------------------
+  applyTheme(document.documentElement.dataset.theme);
+  if (state.start) els.start.value = state.start.label;
+  renderType();
+  render();
+  renderLog();
+})();
+</script>
+</body>
+</html>
